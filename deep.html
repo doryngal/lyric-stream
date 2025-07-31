@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stream песни</title>
+    <style>
+        @font-face {
+            font-family: 'Inter';
+            src: url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            height: 100vh;
+            overflow: hidden;
+            color: white;
+            position: relative;
+            transition: background-color 0.6s ease;
+        }
+
+        .background {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            transition: opacity 0.7s ease;
+        }
+
+        .background::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0.3) 100%);
+            z-index: 1;
+        }
+
+        .background.grain::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400"><filter id="noise"><feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/></filter><rect width="100%" height="100%" filter="url(%23noise)" opacity="0.06"/></svg>');
+            z-index: 2;
+            pointer-events: none;
+        }
+
+        .header {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+        }
+
+        .song-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .song-artist {
+            font-size: 0.9rem;
+            opacity: 0.8;
+            margin-top: 4px;
+        }
+
+        .lyrics-container {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 90%;
+            max-width: 800px;
+            text-align: center;
+            z-index: 5;
+        }
+
+        .lyrics-line {
+            margin: 20px 0;
+            transition: all 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+            text-shadow: 0 2px 8px rgba(0,0,0,0.4);
+        }
+
+        .lyrics-line.previous {
+            opacity: 0.5;
+            font-size: clamp(16px, 3vw, 36px);
+            transform: translateY(-10px);
+        }
+
+        .lyrics-line.current {
+            opacity: 1;
+            font-size: clamp(32px, 6vw, 72px);
+            font-weight: 600;
+            margin: 30px 0;
+        }
+
+        .lyrics-line.next {
+            opacity: 0.5;
+            font-size: clamp(16px, 3vw, 36px);
+            transform: translateY(10px);
+        }
+
+        .lyrics-line.hidden {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+
+        @media (max-width: 768px) {
+            .lyrics-line.current {
+                font-size: clamp(24px, 8vw, 48px);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="background" id="background"></div>
+    
+    <div class="header">
+        <div class="song-title" id="song-title"></div>
+        <div class="song-artist" id="song-artist"></div>
+    </div>
+    
+    <div class="lyrics-container" id="lyrics-container"></div>
+
+
+    <script>
+        // Конфигурация приложения
+        const config = {
+            loopLines: false,
+            autoplayEnabled: false,
+            autoplayIntervalMs: 1400,
+            initialSongId: "nenavizhu"
+        };
+
+        // Данные песен
+        const songs = [
+            {
+                "id": "nenavizhu",
+                "title": "Ненавижу",
+                "artist": "Иван Дорн",
+                "lines": [
+                    "Ненавижу",
+                    "",
+                    "",
+                    "Я ненавижу утро, ненавижу день,",
+                    "Ненавижу вечер, ночь — тем более.",
+                    "Я ненавижу солнце, ненавижу тень,",
+                    "Ненавижу всё, что есть в этом мире.",
+                    "Но больше всего я ненавижу себя,",
+                    "За то, что не могу перестать думать о тебе."
+                ],
+                "theme": {
+                    "primary": "#D94D6A",
+                    "secondary": "#2E2A3B",
+                    "backgroundType": "gradient",
+                    "backgroundImage": "",
+                    "grain": true
+                }
+            },
+            {
+                "id": "demo-2",
+                "title": "Demo Song 2",
+                "artist": "Исполнитель",
+                "lines": [
+                    "Это вторая демо песня,",
+                    "Здесь мог бы быть ваш текст,",
+                    "Но пока это просто пример,",
+                    "Как работает это караоке.",
+                    "Нажимайте стрелки вверх и вниз,",
+                    "Чтобы переключать строки."
+                ],
+                "theme": {
+                    "primary": "#6AD9B6",
+                    "secondary": "#1D2B2A",
+                    "backgroundType": "gradient",
+                    "grain": true
+                }
+            }
+        ];
+
+        // Состояние приложения
+        let state = {
+            currentSongIndex: songs.findIndex(song => song.id === config.initialSongId),
+            currentLineIndex: 0,
+            isHelpVisible: false,
+            isAutoplay: false,
+            autoplayInterval: null,
+            keyHold: {
+                up: false,
+                down: false,
+                interval: null,
+                speed: 200,
+                minSpeed: 80,
+                acceleration: 20
+            }
+        };
+
+        // DOM элементы
+        const elements = {
+            background: document.getElementById('background'),
+            lyricsContainer: document.getElementById('lyrics-container'),
+            songTitle: document.getElementById('song-title'),
+            songArtist: document.getElementById('song-artist'),
+            helpOverlay: document.getElementById('help-overlay'),
+        };
+
+        // Инициализация приложения
+        function init() {
+            if (state.currentSongIndex === -1) state.currentSongIndex = 0;
+            
+            renderSong();
+            renderLines();
+            setupEventListeners();
+        }
+
+        // Настройка обработчиков событий
+        function setupEventListeners() {
+            // Клавиатура
+            window.addEventListener('keydown', handleKeyDown);
+            window.addEventListener('keyup', handleKeyUp);
+        
+            
+            // Полноэкранный режим по клику
+            document.addEventListener('click', () => {
+                if (!state.isHelpVisible) {
+                    document.documentElement.requestFullscreen?.().catch(err => {
+                        console.log('Fullscreen error:', err);
+                    });
+                }
+            });
+        }
+
+        // Обработка нажатия клавиш
+        function handleKeyDown(e) {
+            // Полноэкранный режим
+            if (e.key.toLowerCase() === 'f') {
+                toggleFullscreen();
+                return;
+            }
+            
+            // Навигация по строкам
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                nextLine();
+                startKeyHold('down');
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                prevLine();
+                startKeyHold('up');
+            }
+            
+            // Навигация по песням
+            if (e.shiftKey) {
+                if (e.key === 'ArrowRight') {
+                    e.preventDefault();
+                    nextSong();
+                } else if (e.key === 'ArrowLeft') {
+                    e.preventDefault();
+                    prevSong();
+                }
+            }
+        }
+
+        // Обработка отпускания клавиш
+        function handleKeyUp(e) {
+            if (e.key === 'ArrowDown') {
+                stopKeyHold();
+            } else if (e.key === 'ArrowUp') {
+                stopKeyHold();
+            }
+        }
+
+        // Начало удержания клавиши
+        function startKeyHold(direction) {
+            if (state.keyHold.interval) return;
+            
+            state.keyHold[direction] = true;
+            state.keyHold.speed = 200;
+            
+            state.keyHold.interval = setInterval(() => {
+                if (direction === 'down') {
+                    nextLine();
+                } else {
+                    prevLine();
+                }
+                
+                // Ускорение при удержании
+                state.keyHold.speed = Math.max(
+                    state.keyHold.minSpeed, 
+                    state.keyHold.speed - state.keyHold.acceleration
+                );
+                
+                // Обновление интервала
+                clearInterval(state.keyHold.interval);
+                state.keyHold.interval = setInterval(() => {
+                    if (direction === 'down') {
+                        nextLine();
+                    } else {
+                        prevLine();
+                    }
+                }, state.keyHold.speed);
+            }, state.keyHold.speed);
+        }
+
+        // Остановка удержания клавиши
+        function stopKeyHold() {
+            clearInterval(state.keyHold.interval);
+            state.keyHold.interval = null;
+            state.keyHold.up = false;
+            state.keyHold.down = false;
+        }
+
+        // Переключение полноэкранного режима
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => {
+                    console.log('Fullscreen error:', err);
+                });
+            } else {
+                document.exitFullscreen();
+            }
+        }
+
+        // Следующая строка
+        function nextLine() {
+            const currentSong = songs[state.currentSongIndex];
+            
+            if (state.currentLineIndex < currentSong.lines.length - 1) {
+                state.currentLineIndex++;
+                renderLines();
+            } else if (config.loopLines) {
+                state.currentLineIndex = 0;
+                renderLines();
+            }
+        }
+
+        // Предыдущая строка
+        function prevLine() {
+            if (state.currentLineIndex > 0) {
+                state.currentLineIndex--;
+                renderLines();
+            } else if (config.loopLines) {
+                const currentSong = songs[state.currentSongIndex];
+                state.currentLineIndex = currentSong.lines.length - 1;
+                renderLines();
+            }
+        }
+
+        // Следующая песня
+        function nextSong() {
+            state.currentSongIndex = (state.currentSongIndex + 1) % songs.length;
+            state.currentLineIndex = 0;
+            changeSong();
+        }
+
+        // Предыдущая песня
+        function prevSong() {
+            state.currentSongIndex = (state.currentSongIndex - 1 + songs.length) % songs.length;
+            state.currentLineIndex = 0;
+            changeSong();
+        }
+
+        // Смена песни
+        function changeSong() {
+            renderSong();
+            renderLines();
+        }
+
+        // Отрисовка песни (фона и заголовка)
+        function renderSong() {
+            const song = songs[state.currentSongIndex];
+            
+            // Установка заголовка
+            elements.songTitle.textContent = song.title;
+            elements.songArtist.textContent = song.artist;
+            
+            // Установка фона
+            const theme = song.theme;
+            let backgroundStyle = '';
+            
+            if (theme.backgroundType === 'gradient') {
+                backgroundStyle = `linear-gradient(135deg, ${theme.secondary} 0%, ${theme.primary} 100%)`;
+            } else {
+                backgroundStyle = theme.primary;
+            }
+            
+            elements.background.style.background = backgroundStyle;
+            elements.background.style.backgroundColor = theme.primary;
+            
+            // Зерно
+            if (theme.grain) {
+                elements.background.classList.add('grain');
+            } else {
+                elements.background.classList.remove('grain');
+            }
+            
+            // Цвет текста (для лучшей читаемости)
+            const textColor = getContrastColor(theme.primary);
+            document.body.style.color = textColor;
+        }
+
+        // Отрисовка строк
+        function renderLines() {
+            const song = songs[state.currentSongIndex];
+            const lines = song.lines;
+            const currentIndex = state.currentLineIndex;
+            
+            elements.lyricsContainer.innerHTML = '';
+            
+            // Предыдущие строки (1-2)
+            for (let i = Math.max(0, currentIndex - 2); i < currentIndex; i++) {
+                const lineEl = createLineElement(lines[i], 'previous');
+                if (i === currentIndex - 2) lineEl.classList.add('hidden');
+                elements.lyricsContainer.appendChild(lineEl);
+            }
+            
+            // Текущая строка
+            const currentLineEl = createLineElement(lines[currentIndex], 'current');
+            currentLineEl.setAttribute('aria-live', 'polite');
+            elements.lyricsContainer.appendChild(currentLineEl);
+            
+            // Следующие строки (1-2)
+            for (let i = currentIndex + 1; i <= Math.min(lines.length - 1, currentIndex + 2); i++) {
+                const lineEl = createLineElement(lines[i], 'next');
+                if (i === currentIndex + 2) lineEl.classList.add('hidden');
+                elements.lyricsContainer.appendChild(lineEl);
+            }
+        }
+
+        // Создание элемента строки
+        function createLineElement(text, type) {
+            const lineEl = document.createElement('div');
+            lineEl.className = `lyrics-line ${type}`;
+            lineEl.textContent = text;
+            return lineEl;
+        }
+
+        // Получение контрастного цвета
+        function getContrastColor(hexColor) {
+            // Если цвет очень светлый, возвращаем чёрный, иначе белый
+            const r = parseInt(hexColor.substr(1, 2), 16);
+            const g = parseInt(hexColor.substr(3, 2), 16);
+            const b = parseInt(hexColor.substr(5, 2), 16);
+            const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+            return brightness > 128 ? '#000000' : '#FFFFFF';
+        }
+
+        // Запуск приложения
+        init();
+    </script>
+</body>
+</html>
